@@ -16,8 +16,10 @@ type PowerState int
 const (
 	Unknown PowerState = iota
 	PSOff
+	BadTemp
 	MPPT
 	Trickle
+	Charged
 )
 
 type Report struct {
@@ -44,9 +46,9 @@ func (p *PWRGate) readLoop() {
 	var retried bool
 	reconfigure = true
 	var buf string
-	lineReg := regexp.MustCompile(`^\s*(.*?)\s+(PS.*)\r\n`)
-	pairReg := regexp.MustCompile(`(\S[^=]*)=\s*([^=]*[^= ])\s+`)
-    batReg := regexp.MustCompile(`^(\S+)V,\s+(\S+)A$`)
+	lineReg := regexp.MustCompile(`^\s*(.*?)\s+(PS[^S].*)\r\n`)
+	pairReg := regexp.MustCompile(`(\S[^=]*)=\s*([^=]*[^= ])(\s+|$)`)
+	batReg := regexp.MustCompile(`^(\S+)V,\s+(\S+)A$`)
 
 	for {
 		select {
@@ -84,13 +86,13 @@ func (p *PWRGate) readLoop() {
 					panic("huh?")
 				}
 
-                powerStatus := m[1]
-                pairs := pairReg.FindAllStringSubmatch(m[2], -1)
-                vars := map[string]string{}
+				powerStatus := m[1]
+				pairs := pairReg.FindAllStringSubmatch(m[2], -1)
+				vars := map[string]string{}
 
-                for _, pair := range pairs {
-                    vars[pair[1]] = pair[2]
-                }
+				for _, pair := range pairs {
+					vars[pair[1]] = pair[2]
+				}
 
 				r := Report{}
 				switch powerStatus {
@@ -100,55 +102,59 @@ func (p *PWRGate) readLoop() {
 					r.PowerState = PSOff
 				case "Trickle":
 					r.PowerState = Trickle
+				case "Charged":
+					r.PowerState = Charged
+				case "Bad temp":
+					r.PowerState = BadTemp
 				default:
 					r.PowerState = Unknown
 				}
 
 				var err error
 
-                if psvolts, ok := vars["PS"]; ok {
-                    r.PSVolts, err = strconv.ParseFloat(strings.TrimSuffix(psvolts, "V"), 64)
-                    if err != nil {
-                        fmt.Println("PSVolts", psvolts)
-                        continue
-                    }
+				if psvolts, ok := vars["PS"]; ok {
+					r.PSVolts, err = strconv.ParseFloat(strings.TrimSuffix(psvolts, "V"), 64)
+					if err != nil {
+						fmt.Println("PSVolts", psvolts)
+						continue
+					}
 				}
 
-                if bat, ok := vars["Bat"]; ok {
-                    m := batReg.FindStringSubmatch(bat)
-                    if m == nil {
-                        fmt.Println("Bat", bat)
-                        continue
-                    }
+				if bat, ok := vars["Bat"]; ok {
+					m := batReg.FindStringSubmatch(bat)
+					if m == nil {
+						fmt.Println("Bat", bat)
+						continue
+					}
 
-                    r.BatteryVolts, err = strconv.ParseFloat(m[1], 64)
-                    if err != nil {
-                        fmt.Println("BatteryVolts", m[1])
-                        continue
-                    }
-                    r.ChargeAmps, err = strconv.ParseFloat(m[2], 64)
-                    if err != nil {
-                        fmt.Println("ChargeAmps", m[4])
-                        continue
-                    }
-                    r.ChargePower = r.ChargeAmps * r.BatteryVolts
+					r.BatteryVolts, err = strconv.ParseFloat(m[1], 64)
+					if err != nil {
+						fmt.Println("BatteryVolts", m[1])
+						continue
+					}
+					r.ChargeAmps, err = strconv.ParseFloat(m[2], 64)
+					if err != nil {
+						fmt.Println("ChargeAmps", m[4])
+						continue
+					}
+					r.ChargePower = r.ChargeAmps * r.BatteryVolts
 				}
 
-                if sol, ok := vars["Sol"]; ok {
-                    r.SolarVolts, err = strconv.ParseFloat(strings.TrimSuffix(sol, "V"), 64)
-                    if err != nil {
-                        fmt.Println("SolarVolts", sol)
-                        continue
-                    }
-                }
+				if sol, ok := vars["Sol"]; ok {
+					r.SolarVolts, err = strconv.ParseFloat(strings.TrimSuffix(sol, "V"), 64)
+					if err != nil {
+						fmt.Println("SolarVolts", sol)
+						continue
+					}
+				}
 
-                if temp, ok := vars["Temp"]; ok {
-                    r.TempF, err = strconv.ParseFloat(temp, 64)
-                    if err != nil {
-                        fmt.Println("TempF", temp)
-                        continue
-                    }
-                }
+				if temp, ok := vars["Temp"]; ok {
+					r.TempF, err = strconv.ParseFloat(temp, 64)
+					if err != nil {
+						fmt.Println("TempF", temp)
+						continue
+					}
+				}
 
 				p.Reports <- r
 
